@@ -43,10 +43,6 @@ export const startServer=()=>{
             console.log(`Locally connected to:  http://${ipAddress}:${port}`);
         } else {
             console.log('Unable to determine server IP address.');
-        }
-    })
+        }});}
 
-}
-
-
-
+       
