@@ -28,6 +28,7 @@
     "activedirectory2": "^2.2.0",
     "all": "^0.0.0",
     "axios": "^1.4.0",
+    "cookie-parser": "^1.4.6",
     "dotenv": "^16.1.4",
     "express": "^4.18.2",
     "express-device": "^0.4.2",
