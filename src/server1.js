@@ -1,4 +1,3 @@
-
 import express from 'express';
 import os from 'os';
 import 'dotenv/config';
@@ -10,10 +9,10 @@ import geoip from 'geoip-lite';
 import axios from 'axios';
 import cookieParser from 'cookie-parser';
 import { MongoClient } from 'mongodb';
-
 import { fileURLToPath } from 'url';
 import path, { dirname } from 'path';
 import { routes } from './allRoutes.js';
+import crypto from 'crypto-js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -29,34 +28,6 @@ routes.forEach((route) => {
 });
 
 const port = process.env.PORT;
-
-// export const startServer = () => {
-//   app.listen(port, () => {
-//     const networkInterfaces = os.networkInterfaces();
-//     let ipAddress;
-
-//     for (const interfaceName in networkInterfaces) {
-//       const interfaces = networkInterfaces[interfaceName];
-//       for (const iface of interfaces) {
-//         if (!iface.internal && iface.family === 'IPv4') {
-//           ipAddress = iface.address;
-//           break;
-//         }
-//       }
-//       if (ipAddress) {
-//         break;
-//       }
-//     }
-
-//     console.log(`Server is running on port http://localhost:${port}`);
-//     if (ipAddress) {
-//       console.log(`Locally connected to:  http://${ipAddress}:${port}`);
-//     } else {
-//       console.log('Unable to determine server IP address.');
-//     }
-//   });
-// };
-
 
 const uri = 'mongodb://localhost:27017';
 const dbName = 'your-database-name';
@@ -74,33 +45,33 @@ export const startServer = () => {
 
   //   console.log('Connected to MongoDB');
 
-    // Start the server
-    app.listen(port, () => {
-      const networkInterfaces = os.networkInterfaces();
-      let ipAddress;
+  // Start the server
+  app.listen(port, () => {
+    const networkInterfaces = os.networkInterfaces();
+    let ipAddress;
 
-      for (const interfaceName in networkInterfaces) {
-        const interfaces = networkInterfaces[interfaceName];
-        for (const iface of interfaces) {
-          if (!iface.internal && iface.family === 'IPv4') {
-            ipAddress = iface.address;
-            break;
-          }
-        }
-        if (ipAddress) {
+    for (const interfaceName in networkInterfaces) {
+      const interfaces = networkInterfaces[interfaceName];
+      for (const iface of interfaces) {
+        if (!iface.internal && iface.family === 'IPv4') {
+          ipAddress = iface.address;
           break;
         }
       }
-
-      console.log(`Server is running on port http://localhost:${port}`);
       if (ipAddress) {
-        console.log(`Locally connected to:  http://${ipAddress}:${port}`);
-      } else {
-        console.log('Unable to determine server IP address.');
+        break;
       }
-    });
-  
+    }
+
+    console.log(`Server is running on port http://localhost:${port}`);
+    if (ipAddress) {
+      console.log(`Locally connected to:  http://${ipAddress}:${port}`);
+    } else {
+      console.log('Unable to determine server IP address.');
+    }
+  });
 };
+
 app.get('/', (req, res) => {
   const ipAddress = ip.address();
   ip.subnet('192.168.1.134', '255.255.255.192');
@@ -115,7 +86,6 @@ app.use(device.capture());
 
 const userLocationCache = new Map();
 const responseCache = {};
-
 app.get('/api/v1', async (req, res) => {
   try {
     const ip = getClientIP(req);
@@ -124,10 +94,16 @@ app.get('/api/v1', async (req, res) => {
     // Check if the stored IP matches the request IP
     const storedIP = req.cookies.ipAddress;
     if (storedIP === ip) {
-      const cachedResponse = responseCache[ip];
-      if (cachedResponse) {
-        res.send(cachedResponse);
-        return; // Return early to skip the remaining code
+      const encryptedResponseData = req.cookies.responseData;
+      if (encryptedResponseData) {
+        const decryptedResponseData = decryptCookie(encryptedResponseData, 'secretKey');
+        if (decryptedResponseData) {
+          const cachedResponse = JSON.parse(decryptedResponseData);
+
+          // Return the cached response without calculating response time
+          res.send(cachedResponse);
+          return; // Return early to skip the remaining code
+        }
       }
     }
 
@@ -150,8 +126,6 @@ app.get('/api/v1', async (req, res) => {
       userLocationCache.set(ip, description);
     }
 
-    const responseStartTime = new Date().getTime(); // Record the response start time
-
     const responseData = {
       ip,
       networkType,
@@ -160,35 +134,50 @@ app.get('/api/v1', async (req, res) => {
       os,
       isVpn,
       description,
-      responseTime: '', // Initialize responseTime
     };
 
-    // Store the IP and response data in cookies
-    res.cookie('ipAddress', ip, { maxAge: 24 * 60 * 60 * 1000, httpOnly: true });
-    res.cookie('responseData', responseData, { maxAge: 24 * 60 * 60 * 1000, httpOnly: true });
+    const responseStartTime = new Date().getTime(); // Record the response start time
 
-    // Cache the response data
-    responseCache[ip] = responseData;
-
-    res.send(responseData);
-    
+    // Encrypt and store the response data in cookies
+    const encryptedResponseData = encryptCookie(JSON.stringify(responseData), 'secretKey');
+    if (encryptedResponseData) {
+      res.cookie('ipAddress', ip, { maxAge: 24 * 60 * 60 * 1000, httpOnly: true });
+      res.cookie('responseData', encryptedResponseData, { maxAge: 24 * 60 * 60 * 1000, httpOnly: true });
+    }
 
     const responseEndTime = new Date().getTime(); // Record the response end time
     const responseTime = responseEndTime - responseStartTime; // Calculate the response time in milliseconds
     responseData.responseTime = `${responseTime}ms`; // Format the response time with 'ms'
+
+    res.send(responseData);
   } catch (error) {
     res.status(500).send(error.message);
   }
 });
 
 
+// Encrypt cookie data
+const encryptCookie = (data, secretKey) => {
+  try {
+    const encryptedData = crypto.AES.encrypt(data, secretKey).toString();
+    return encryptedData;
+  } catch (error) {
+    console.error('Failed to encrypt cookie data:', error);
+    return null;
+  }
+};
 
-
-
-
-
-
-
+// Decrypt cookie data
+const decryptCookie = (encryptedData, secretKey) => {
+  try {
+    const bytes = crypto.AES.decrypt(encryptedData, secretKey);
+    const decryptedData = bytes.toString(crypto.enc.Utf8);
+    return decryptedData;
+  } catch (error) {
+    console.error('Failed to decrypt cookie data:', error);
+    return null;
+  }
+};
 
 const getClientIP = (req) => {
   const forwardedFor = req.headers['x-forwarded-for'];
@@ -219,8 +208,21 @@ const getNetworkType = (req) => {
 };
 
 const isLocalhost = (req) => {
-  return req.connection.localAddress === '127.0.0.1' || req.connection.localAddress === '::1';
+  const remoteAddress = req.connection.remoteAddress;
+  const forwardedFor = req.headers['x-forwarded-for'];
+  const ips = forwardedFor ? forwardedFor.split(',') : [];
+  ips.push(remoteAddress);
+
+  return (
+    ips.includes('127.0.0.1') ||
+    ips.includes('::1') ||
+    ips.includes('::ffff:127.0.0.1') ||
+    ips.includes('localhost') ||
+    ips.includes('0.0.0.0') ||
+    ips.includes('::')
+  );
 };
+
 
 const isLANConnection = (req) => {
   return isPrivateIP(req.connection.remoteAddress);
@@ -267,6 +269,7 @@ const detectVPN = (ip) => {
 
   return false;
 };
+
 // Define async function userLocation with parameters ip and res
 const userLocation = async (ip, res) => {
   // Check if userLocationCache has ip key
@@ -307,22 +310,10 @@ const userLocation = async (ip, res) => {
     });
   }
 };
+
 // To retrieve the user location data from the cookie:
 
 app.get('/cookies', (req, res) => {
-  //TODO : if response has empty   send response as no cookies present
-
   const userLocation = req.cookies.userLocation;
-  res.json(userLocation);
-});
-
-app.get('/api/cookies', (req, res) => {
-  const cookies = req.cookies;
-  const responseData = cookies.responseData;
-
-  if (responseData) {
-    res.send(responseData);
-  } else {
-    res.status(404).send('No cookies data found.');
-  }
+  res.send(userLocation);
 });
